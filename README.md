@@ -1,11 +1,18 @@
 # NeuralGateway
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Online%20Swagger%20UI-00e676?style=for-the-badge&logo=fastapi&logoColor=white)](https://every-spies-flow.loca.lt/docs)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110.0-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-Multi--stage-2496ED.svg?logo=docker)](https://www.docker.com/)
 [![Redis](https://img.shields.io/badge/Redis-7.2-DC382D.svg?logo=redis)](https://redis.io/)
 [![Apache Kafka](https://img.shields.io/badge/Kafka-7.5.0-231F20.svg?logo=apachekafka)](https://kafka.apache.org/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-v2.51.0-E6522C.svg?logo=prometheus)](https://prometheus.io/)
+
+> ### 🌐 Active Live Demo Endpoints
+> - **Interactive Swagger Docs**: [https://every-spies-flow.loca.lt/docs](https://every-spies-flow.loca.lt/docs) *(Local: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs))*
+> - **Health & Cluster Status**: [https://every-spies-flow.loca.lt/healthz](https://every-spies-flow.loca.lt/healthz) *(Local: [http://127.0.0.1:8000/healthz](http://127.0.0.1:8000/healthz))*
+> - **Prometheus Metrics**: [https://every-spies-flow.loca.lt/metrics](https://every-spies-flow.loca.lt/metrics) *(Local: [http://127.0.0.1:8000/metrics](http://127.0.0.1:8000/metrics))*
+> - **Provider Status**: [https://every-spies-flow.loca.lt/v1/providers](https://every-spies-flow.loca.lt/v1/providers) *(Local: [http://127.0.0.1:8000/v1/providers](http://127.0.0.1:8000/v1/providers))*
 
 **NeuralGateway** is an enterprise-grade, high-throughput, multi-tenant distributed LLM inference gateway engineered in Python. It provides atomic distributed rate-limiting via Redis Lua scripts, semantic vector caching with cosine similarity, dynamic latency-weighted routing with 3-state circuit breaking, non-blocking Kafka audit trails, and comprehensive Prometheus telemetry.
 
