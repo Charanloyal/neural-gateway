@@ -207,3 +207,53 @@ class SemanticCache:
                 await self.redis.srem(index_key, *stale_ids)
         except Exception as e:
             logger.warning(f"Failed to prune stale cache keys: {e}")
+
+
+class InMemorySemanticCache:
+    """In-memory semantic vector cache fallback for standalone execution."""
+
+    def __init__(self, embedding_engine: Optional[EmbeddingEngine] = None):
+        self.embedder = embedding_engine or EmbeddingEngine()
+        self.threshold = settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD
+        self._entries: Dict[str, List[Dict[str, Any]]] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, tenant_id: str, prompt: str) -> Optional[Tuple[str, float]]:
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return None
+
+        query_vec = self.embedder.encode(prompt)
+        async with self._lock:
+            items = self._entries.get(tenant_id, [])
+            best_sim = -1.0
+            best_resp: Optional[str] = None
+
+            for item in items:
+                sim = float(np.dot(query_vec, item["vector"]))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_resp = item["response"]
+
+            if best_sim >= self.threshold and best_resp is not None:
+                logger.info(
+                    f"[InMemoryCache] HIT for tenant '{tenant_id}' (sim: {best_sim:.4f} >= {self.threshold})"
+                )
+                return best_resp, best_sim
+
+            return None
+
+    async def set(self, tenant_id: str, prompt: str, completion: str) -> None:
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return
+
+        query_vec = self.embedder.encode(prompt)
+        async with self._lock:
+            if tenant_id not in self._entries:
+                self._entries[tenant_id] = []
+            self._entries[tenant_id].append({
+                "prompt": prompt,
+                "response": completion,
+                "vector": query_vec,
+                "created_at": time.time(),
+            })
+

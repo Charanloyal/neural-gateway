@@ -146,3 +146,66 @@ class RedisRateLimiter:
                         retry_after=0.0,
                     )
                 await asyncio.sleep(settings.REDIS_RETRY_DELAY * attempt)
+
+
+class InMemoryRateLimiter:
+    """Thread-safe in-memory token bucket rate limiter for local / degraded mode."""
+
+    def __init__(self):
+        self._buckets: Dict[str, Dict[str, float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def check_rate_limit(
+        self,
+        tenant_id: str,
+        requested_tokens: float = 1.0,
+        custom_burst: Optional[float] = None,
+        custom_refill: Optional[float] = None,
+    ) -> RateLimitResult:
+        if not settings.RATE_LIMIT_ENABLED:
+            return RateLimitResult(
+                allowed=True,
+                limit=int(settings.RATE_LIMIT_BURST_CAPACITY),
+                remaining=int(settings.RATE_LIMIT_BURST_CAPACITY),
+                reset_after=0,
+                retry_after=0.0,
+            )
+
+        capacity = custom_burst or settings.RATE_LIMIT_BURST_CAPACITY
+        refill_rate = custom_refill or settings.RATE_LIMIT_TOKENS_PER_SECOND
+        now = time.time()
+
+        async with self._lock:
+            bucket = self._buckets.get(tenant_id)
+            if not bucket:
+                bucket = {"tokens": capacity, "last_updated": now}
+                self._buckets[tenant_id] = bucket
+
+            elapsed = max(0.0, now - bucket["last_updated"])
+            tokens = min(capacity, bucket["tokens"] + (elapsed * refill_rate))
+
+            if tokens >= requested_tokens:
+                tokens -= requested_tokens
+                bucket["tokens"] = tokens
+                bucket["last_updated"] = now
+                reset_after = max(0, int((capacity - tokens) / refill_rate))
+                return RateLimitResult(
+                    allowed=True,
+                    limit=int(capacity),
+                    remaining=int(tokens),
+                    reset_after=reset_after,
+                    retry_after=0.0,
+                )
+            else:
+                retry_after = max(0.0, (requested_tokens - tokens) / refill_rate)
+                bucket["tokens"] = tokens
+                bucket["last_updated"] = now
+                reset_after = max(0, int((capacity - tokens) / refill_rate))
+                return RateLimitResult(
+                    allowed=False,
+                    limit=int(capacity),
+                    remaining=int(tokens),
+                    reset_after=reset_after,
+                    retry_after=retry_after,
+                )
+

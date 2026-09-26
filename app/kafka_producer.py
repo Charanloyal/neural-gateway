@@ -47,35 +47,36 @@ class KafkaAuditProducer:
         self._is_running = False
 
     async def start(self) -> None:
-        """Starts Kafka producer and background worker with connection resilience."""
-        logger.info(f"Connecting to Kafka brokers at: {settings.KAFKA_BOOTSTRAP_SERVERS}")
-        self.producer = AIOKafkaProducer(
+        """Starts Kafka worker queue and connects asynchronously in background."""
+        self._is_running = True
+        self._worker_task = asyncio.create_task(self._process_queue())
+        asyncio.create_task(self._init_connection())
+
+    async def _init_connection(self) -> None:
+        prod = AIOKafkaProducer(
             bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
             client_id=settings.KAFKA_CLIENT_ID,
             retry_backoff_ms=settings.KAFKA_RETRY_BACKOFF_MS,
-            request_timeout_ms=5000,
+            request_timeout_ms=3000,
             acks="all",
         )
-
-        # Retry loop for Kafka availability during container orchestration startup
-        max_attempts = 10
+        max_attempts = 4
         for attempt in range(1, max_attempts + 1):
             try:
-                await self.producer.start()
-                logger.info("AIOKafkaProducer started successfully.")
-                break
-            except KafkaError as e:
-                logger.warning(
-                    f"Kafka connection attempt {attempt}/{max_attempts} failed: {e}. Retrying in 2s..."
-                )
+                await prod.start()
+                self.producer = prod
+                logger.info("AIOKafkaProducer connected and started successfully.")
+                return
+            except Exception as e:
+                logger.debug(f"Kafka connection attempt {attempt}/{max_attempts} failed: {e}")
                 if attempt == max_attempts:
-                    logger.error("Failed to connect to Kafka. Audit events will be logged locally as fallback.")
-                    # Keep producer as None; worker will gracefully handle this
-                    break
-                await asyncio.sleep(2.0)
-
-        self._is_running = True
-        self._worker_task = asyncio.create_task(self._process_queue())
+                    logger.info("Kafka broker offline. Routing audit events to local structured fallback.")
+                    try:
+                        await prod.stop()
+                    except Exception:
+                        pass
+                    return
+                await asyncio.sleep(1.5)
 
     async def stop(self) -> None:
         """Drains pending audit events and gracefully terminates connections."""

@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     # Redis Configuration
     REDIS_URL: str = "redis://redis:6379/0"
     REDIS_MAX_CONNECTIONS: int = 50
-    REDIS_SOCKET_TIMEOUT: float = 2.0
-    REDIS_CONNECT_TIMEOUT: float = 5.0
-    REDIS_RETRY_ATTEMPTS: int = 3
-    REDIS_RETRY_DELAY: float = 0.5
+    REDIS_SOCKET_TIMEOUT: float = 1.0
+    REDIS_CONNECT_TIMEOUT: float = 1.0
+    REDIS_RETRY_ATTEMPTS: int = 2
+    REDIS_RETRY_DELAY: float = 0.2
 
     # Kafka Configuration
     KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"

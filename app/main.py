@@ -21,8 +21,8 @@ from app.router import (
     AllProvidersUnavailableException,
     ProviderException,
 )
-from app.rate_limiter import RedisRateLimiter
-from app.cache import SemanticCache, EmbeddingEngine
+from app.rate_limiter import RedisRateLimiter, InMemoryRateLimiter
+from app.cache import SemanticCache, InMemorySemanticCache, EmbeddingEngine
 from app.kafka_producer import kafka_audit_producer, AuditEvent
 from app.telemetry import (
     get_latest_metrics,
@@ -54,34 +54,40 @@ async def lifespan(app: FastAPI):
     logger.info(f"Initializing {settings.APP_NAME} platform services...")
 
     # 1. Connect to Redis with retry mechanism
+    redis_client = None
     for attempt in range(1, settings.REDIS_RETRY_ATTEMPTS + 1):
         try:
-            redis_client = aioredis.from_url(
+            client = aioredis.from_url(
                 settings.REDIS_URL,
                 max_connections=settings.REDIS_MAX_CONNECTIONS,
                 socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
                 socket_connect_timeout=settings.REDIS_CONNECT_TIMEOUT,
                 decode_responses=False,
             )
-            await redis_client.ping()
+            await client.ping()
+            redis_client = client
             logger.info("Connected to Redis successfully.")
             break
         except Exception as e:
             logger.warning(f"Redis initialization attempt {attempt} failed: {e}")
+            redis_client = None
             if attempt == settings.REDIS_RETRY_ATTEMPTS:
-                logger.error("Failed to connect to Redis after maximum retries. Starting in degraded mode.")
+                logger.info("Operating in standalone mode with in-memory Rate Limiting and Semantic Cache.")
             await asyncio.sleep(settings.REDIS_RETRY_DELAY)
 
     # 2. Instantiate Rate Limiter & Semantic Vector Cache
+    embedding_engine = EmbeddingEngine(
+        model_name=settings.EMBEDDING_MODEL_NAME,
+        dimension=settings.EMBEDDING_DIMENSION,
+    )
     if redis_client:
         rate_limiter = RedisRateLimiter(redis_client)
-        embedding_engine = EmbeddingEngine(
-            model_name=settings.EMBEDDING_MODEL_NAME,
-            dimension=settings.EMBEDDING_DIMENSION,
-        )
         semantic_cache = SemanticCache(redis_client, embedding_engine)
+        logger.info("Using distributed Redis Rate Limiter and Semantic Vector Cache.")
     else:
-        logger.warning("Operating without Redis. Rate limiting and caching will be bypassed.")
+        rate_limiter = InMemoryRateLimiter()
+        semantic_cache = InMemorySemanticCache(embedding_engine)
+        logger.info("Using in-memory Token Bucket Rate Limiter and Semantic Cache (standalone mode).")
 
     # 3. Instantiate Provider Pool
     provider_pool = ProviderPool()
