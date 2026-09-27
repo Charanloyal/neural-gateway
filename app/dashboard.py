@@ -1420,15 +1420,22 @@ curl -s http://127.0.0.1:8000/healthz | jq .
                 const data = await res.json();
                 const latency = (performance.now() - t0).toFixed(1);
                 const cacheHeader = res.headers.get('x-cache') || 'MISS';
-                const simScore = res.headers.get('x-cache-similarity') || '0.954';
+                const simScore = res.headers.get('x-cache-similarity');
 
                 hitBox.textContent = `${latency} ms`;
-                simBox.textContent = `${(parseFloat(simScore)*100).toFixed(1)}%`;
+                if (cacheHeader === 'HIT') {
+                    const simPct = simScore ? (parseFloat(simScore) * 100).toFixed(1) + '%' : '100%';
+                    simBox.textContent = simPct;
+                    pill.textContent = `STEP 2: CACHE HIT (${simPct})`;
+                    pill.className = 'badge-pill pill-emerald';
+                    out.innerHTML += `> SUCCESS! [X-Cache: HIT]\\n> Cosine Similarity: ${simScore || '1.000'} (&ge; threshold)\\n> Latency: ${latency}ms (Instant Memory Replay!)\\n> Upstream LLM Provider Cost: $0.00 (100% Free)\\n> Replayed Output: "${data.choices?.[0]?.message?.content || 'Cached completion'}"`;
+                } else {
+                    simBox.textContent = 'Below Threshold';
+                    pill.textContent = 'STEP 2: CACHE MISS';
+                    pill.className = 'badge-pill pill-amber';
+                    out.innerHTML += `> [X-Cache: MISS] Latency: ${latency}ms\\n> Prime completion generated and stored in cache.\\n> Re-run Step 2 to observe instant replay.`;
+                }
 
-                pill.textContent = `STEP 2: CACHE ${cacheHeader} (${(parseFloat(simScore)*100).toFixed(1)}%)`;
-                pill.className = cacheHeader === 'HIT' ? 'badge-pill pill-emerald' : 'badge-pill pill-rose';
-
-                out.innerHTML += `> SUCCESS! [X-Cache: ${cacheHeader}]\\n> Cosine Similarity: ${simScore} (&ge; 0.92 threshold)\\n> Latency: ${latency}ms (Instant Memory Replay!)\\n> Upstream LLM Provider Cost: $0.00\\n> Replayed Output: "${data.choices?.[0]?.message?.content || 'Cached completion'}"`;
                 
                 totalRequestsCount++;
                 if (cacheHeader === 'HIT') totalCacheHits++;
