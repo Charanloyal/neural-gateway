@@ -1,3 +1,4 @@
+import json
 import time
 import uuid
 import asyncio
@@ -6,12 +7,13 @@ from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any, AsyncGenerator
 
 from fastapi import FastAPI, Request, Response, Header, HTTPException, status
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import redis.asyncio as aioredis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from app.dashboard import DASHBOARD_HTML
 from app.config import settings
 from app.circuit_breaker import CircuitBreakerOpenException
 from app.router import (
@@ -109,10 +111,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="High-Throughput Multi-Tenant Distributed LLM Inference Gateway",
+    description="High-Throughput Multi-Tenant Distributed LLM Inference Gateway with Token-Bucket Rate Limiting, Semantic Cosine Caching, EWMA Latency Routing, and 3-State Circuit Breakers.",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Enable CORS for browser-based access and external frontends
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/", response_class=HTMLResponse, tags=["Dashboard"], include_in_schema=False)
+async def dashboard_root():
+    """Serves the interactive control center and live inference playground."""
+    return HTMLResponse(content=DASHBOARD_HTML)
+
 
 
 # Request and Response Models
@@ -139,7 +157,7 @@ def extract_prompt_text(messages: List[ChatMessage]) -> str:
 
 @app.get("/healthz", tags=["System"])
 async def healthz():
-    """Health check for container orchestrators (Docker / Kubernetes)."""
+    """Health check for container orchestrators (Docker / Kubernetes / Render)."""
     redis_healthy = False
     if redis_client:
         try:
@@ -149,17 +167,77 @@ async def healthz():
             redis_healthy = False
 
     kafka_healthy = kafka_audit_producer.producer is not None
+    is_distributed = redis_healthy and kafka_healthy
 
-    status_code = status.HTTP_200_OK if (redis_healthy and kafka_healthy) else status.HTTP_200_OK
     return JSONResponse(
-        status_code=status_code,
+        status_code=status.HTTP_200_OK,
         content={
-            "status": "healthy" if (redis_healthy and kafka_healthy) else "degraded",
-            "redis_connected": redis_healthy,
-            "kafka_connected": kafka_healthy,
+            "status": "healthy",
+            "mode": "distributed" if is_distributed else "standalone_resilient",
+            "cluster": {
+                "redis_connected": redis_healthy,
+                "kafka_connected": kafka_healthy,
+                "rate_limiter": "distributed-redis-lua" if redis_healthy else "in-memory-token-bucket",
+                "semantic_cache": "distributed-redis-vector" if redis_healthy else "in-memory-cosine-store",
+                "audit_stream": "kafka-cluster" if kafka_healthy else "structured-async-event-logger",
+            },
             "providers_registered": len(provider_pool.providers) if provider_pool else 0,
+            "version": "1.0.0",
         },
     )
+
+
+@app.get("/api/dashboard/stats", tags=["Dashboard"])
+async def get_dashboard_stats():
+    """Aggregated real-time metrics for dashboard visualization."""
+    providers_info = {}
+    if provider_pool:
+        for name, p in provider_pool.providers.items():
+            providers_info[name] = {
+                "circuit_state": p.circuit_breaker.state.value,
+                "ewma_latency_ms": round(p.ewma_latency_ms, 2),
+                "consecutive_failures": p.circuit_breaker.failure_count,
+                "retry_after_seconds": round(p.circuit_breaker.retry_after(), 2),
+            }
+
+    return JSONResponse(
+        content={
+            "app_name": settings.APP_NAME,
+            "mode": "distributed" if (redis_client and kafka_audit_producer.producer) else "standalone_resilient",
+            "providers": providers_info,
+            "rate_limit_burst": settings.RATE_LIMIT_BURST_CAPACITY,
+            "rate_limit_refill": settings.RATE_LIMIT_TOKENS_PER_SECOND,
+            "semantic_cache_threshold": settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
+        }
+    )
+
+
+@app.post("/api/dashboard/clear-cache", tags=["Dashboard"])
+async def clear_cache():
+    """Clears the semantic vector cache."""
+    if semantic_cache:
+        await semantic_cache.clear()
+        return JSONResponse(content={"message": "Semantic cache cleared successfully"})
+    return JSONResponse(content={"message": "No active semantic cache"})
+
+
+@app.post("/api/dashboard/reset-circuits", tags=["Dashboard"])
+async def reset_circuits():
+    """Resets all provider circuit breakers back to CLOSED."""
+    if provider_pool:
+        await provider_pool.reset_circuits()
+        return JSONResponse(content={"message": "All provider circuit breakers reset to CLOSED"})
+    return JSONResponse(content={"message": "Provider pool not initialized"})
+
+
+@app.post("/api/dashboard/reset-rate-limiter", tags=["Dashboard"])
+async def reset_rate_limiter():
+    """Replenishes the rate limiter token buckets."""
+    if rate_limiter:
+        await rate_limiter.reset()
+        return JSONResponse(content={"message": "Rate limiter buckets replenished"})
+    return JSONResponse(content={"message": "Rate limiter not initialized"})
+
 
 
 @app.get("/metrics", tags=["Observability"])
@@ -433,11 +511,11 @@ async def chat_completions(
             if chunk_str.startswith("data: ") and not chunk_str.startswith("data: [DONE]"):
                 try:
                     parsed = json.loads(chunk_str[6:].strip())
-                    delta = parsed["choices"][0]["delta"].get("content", "")
+                    delta = parsed.get("choices", [{}])[0].get("delta", {}).get("content", "")
                     if delta:
                         accumulated_text.append(delta)
-                except Exception:
-                    pass
+                except Exception as parse_err:
+                    logger.debug(f"Failed to parse SSE chunk: {parse_err}")
 
         full_content = "".join(accumulated_text)
         return JSONResponse(

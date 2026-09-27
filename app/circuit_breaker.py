@@ -127,3 +127,13 @@ class CircuitBreaker:
         now = time.monotonic()
         remaining = self.recovery_timeout - (now - self.last_state_change)
         return max(0.0, remaining)
+
+    async def reset(self) -> None:
+        """Resets the circuit breaker explicitly back to healthy CLOSED state."""
+        async with self._lock:
+            self.state = CircuitState.CLOSED
+            self.failure_count = 0
+            self.consecutive_successes = 0
+            self.last_state_change = time.monotonic()
+            logger.info(f"[{self.name}] Circuit breaker explicitly reset to CLOSED.")
+

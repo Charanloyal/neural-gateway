@@ -147,6 +147,19 @@ class RedisRateLimiter:
                     )
                 await asyncio.sleep(settings.REDIS_RETRY_DELAY * attempt)
 
+    async def reset(self, tenant_id: Optional[str] = None) -> None:
+        """Resets rate limiting bucket in Redis."""
+        try:
+            if tenant_id:
+                await self.redis.delete(f"rate:bucket:{tenant_id}")
+            else:
+                keys = [k async for k in self.redis.scan_iter("rate:bucket:*")]
+                if keys:
+                    await self.redis.delete(*keys)
+            logger.info("Redis rate limit buckets reset.")
+        except Exception as e:
+            logger.warning(f"Failed to reset Redis rate limit buckets: {e}")
+
 
 class InMemoryRateLimiter:
     """Thread-safe in-memory token bucket rate limiter for local / degraded mode."""
@@ -208,4 +221,14 @@ class InMemoryRateLimiter:
                     reset_after=reset_after,
                     retry_after=retry_after,
                 )
+
+    async def reset(self, tenant_id: Optional[str] = None) -> None:
+        """Resets in-memory rate limiting bucket(s)."""
+        async with self._lock:
+            if tenant_id:
+                self._buckets.pop(tenant_id, None)
+            else:
+                self._buckets.clear()
+            logger.info("In-memory rate limit buckets reset.")
+
 

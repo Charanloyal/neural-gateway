@@ -202,6 +202,13 @@ class ProviderPool:
                 return provider
         return None
 
+    async def reset_circuits(self) -> None:
+        """Resets all provider circuit breakers back to CLOSED."""
+        for provider in self.providers.values():
+            await provider.circuit_breaker.reset()
+        logger.info("All provider circuit breakers have been reset to CLOSED.")
+
+
 
 def format_sse_chunk(chunk_id: str, content: str, model: str, finish_reason: Optional[str] = None) -> str:
     """Formats payload strictly following OpenAI Server-Sent Events protocol."""

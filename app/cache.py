@@ -208,6 +208,24 @@ class SemanticCache:
         except Exception as e:
             logger.warning(f"Failed to prune stale cache keys: {e}")
 
+    async def clear(self, tenant_id: Optional[str] = None) -> None:
+        """Clears cached vectors from Redis."""
+        try:
+            if tenant_id:
+                index_key = f"neural:cache:idx:{tenant_id}"
+                entry_ids = await self.redis.smembers(index_key)
+                if entry_ids:
+                    keys = [f"neural:cache:entry:{tenant_id}:{eid.decode() if isinstance(eid, bytes) else eid}" for eid in entry_ids]
+                    keys.append(index_key)
+                    await self.redis.delete(*keys)
+            else:
+                keys = [k async for k in self.redis.scan_iter("neural:cache:*")]
+                if keys:
+                    await self.redis.delete(*keys)
+            logger.info("Semantic cache cleared.")
+        except Exception as e:
+            logger.warning(f"Failed to clear Redis semantic cache: {e}")
+
 
 class InMemorySemanticCache:
     """In-memory semantic vector cache fallback for standalone execution."""
@@ -256,4 +274,14 @@ class InMemorySemanticCache:
                 "vector": query_vec,
                 "created_at": time.time(),
             })
+
+    async def clear(self, tenant_id: Optional[str] = None) -> None:
+        """Clears in-memory semantic cache entries."""
+        async with self._lock:
+            if tenant_id:
+                self._entries.pop(tenant_id, None)
+            else:
+                self._entries.clear()
+            logger.info("In-memory semantic cache cleared.")
+
 

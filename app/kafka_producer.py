@@ -44,13 +44,15 @@ class KafkaAuditProducer:
         self.topic = settings.KAFKA_TOPIC_AUDIT
         self._queue: asyncio.Queue[AuditEvent] = asyncio.Queue(maxsize=10000)
         self._worker_task: Optional[asyncio.Task] = None
+        self._init_task: Optional[asyncio.Task] = None
+        self._connecting_producer: Optional[AIOKafkaProducer] = None
         self._is_running = False
 
     async def start(self) -> None:
         """Starts Kafka worker queue and connects asynchronously in background."""
         self._is_running = True
         self._worker_task = asyncio.create_task(self._process_queue())
-        asyncio.create_task(self._init_connection())
+        self._init_task = asyncio.create_task(self._init_connection())
 
     async def _init_connection(self) -> None:
         prod = AIOKafkaProducer(
@@ -60,11 +62,19 @@ class KafkaAuditProducer:
             request_timeout_ms=3000,
             acks="all",
         )
+        self._connecting_producer = prod
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
+            if not self._is_running:
+                try:
+                    await prod.stop()
+                except Exception:
+                    pass
+                return
             try:
                 await prod.start()
                 self.producer = prod
+                self._connecting_producer = None
                 logger.info("AIOKafkaProducer connected and started successfully.")
                 return
             except Exception as e:
@@ -75,18 +85,40 @@ class KafkaAuditProducer:
                         await prod.stop()
                     except Exception:
                         pass
+                    self._connecting_producer = None
                     return
-                await asyncio.sleep(1.5)
+                try:
+                    await asyncio.sleep(1.5)
+                except asyncio.CancelledError:
+                    try:
+                        await prod.stop()
+                    except Exception:
+                        pass
+                    return
 
     async def stop(self) -> None:
         """Drains pending audit events and gracefully terminates connections."""
         self._is_running = False
+        if self._init_task and not self._init_task.done():
+            self._init_task.cancel()
+            try:
+                await self._init_task
+            except asyncio.CancelledError:
+                pass
+
         if self._worker_task:
             self._worker_task.cancel()
             try:
                 await self._worker_task
             except asyncio.CancelledError:
                 pass
+
+        if self._connecting_producer:
+            try:
+                await self._connecting_producer.stop()
+            except Exception:
+                pass
+            self._connecting_producer = None
 
         if self.producer:
             try:
@@ -95,6 +127,7 @@ class KafkaAuditProducer:
                 logger.info("Kafka producer stopped.")
             except Exception as e:
                 logger.error(f"Error closing Kafka producer: {e}")
+
 
     def enqueue(self, event: AuditEvent) -> None:
         """Non-blocking enqueue for audit events."""

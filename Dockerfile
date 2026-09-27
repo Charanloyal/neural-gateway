@@ -41,9 +41,10 @@ USER appuser
 
 EXPOSE 8000
 
-# Container runtime healthcheck
+# Container runtime healthcheck with dynamic port resolution
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').getcode() == 200 else 1)" || exit 1
+    CMD python -c "import urllib.request, sys, os; port = os.getenv('PORT', '8000'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz').getcode() == 200 else 1)" || exit 1
 
-# Launch high-throughput ASGI worker pool
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Launch high-throughput ASGI worker pool with dynamic port & worker scaling
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2}"]
+
