@@ -7,9 +7,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NeuralGateway | Distributed LLM Inference Control Center</title>
+    <meta name="description" content="Enterprise-Grade Distributed LLM Inference Gateway with Token-Bucket Lua Rate Limiting, Semantic Cosine Caching, EWMA Latency Routing, and 3-State Circuit Breakers.">
+    <meta property="og:title" content="NeuralGateway | Distributed LLM Inference Gateway">
+    <meta property="og:description" content="High-Throughput Multi-Tenant Distributed LLM Inference Gateway with live interactive playground, semantic vector cache, and zero-downtime circuit breakers.">
+    <meta property="og:type" content="website">
+    <meta name="theme-color" content="#06b6d4">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2306b6d4' stroke-width='2'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <style>
         :root {
             --bg-base: #07090e;
@@ -1449,32 +1456,21 @@ curl -s http://127.0.0.1:8000/healthz | jq .
         // Circuit Breaker Fault Injection
         async function injectOutageOpenAI() {
             const out = document.getElementById('circuit-output');
-            out.innerHTML = '> Injecting simulated upstream failures into openai-primary...\\n';
-
-            for (let i = 1; i <= 4; i++) {
-                try {
-                    await fetch('/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Tenant-ID': 'circuit-tester',
-                            'x-mock-fail-provider': 'openai-primary'
-                        },
-                        body: JSON.stringify({
-                            model: 'gpt-4o',
-                            messages: [{ role: 'user', content: 'test failure' }],
-                            stream: false
-                        })
-                    });
-                } catch (e) {}
-
-                out.innerHTML += `> Injected failure probe ${i}/4 -> Failure recorded in CircuitBreaker\\n`;
-                await new Promise(r => setTimeout(r, 120));
+            out.innerHTML = '> Injecting 4 consecutive simulated connection failures into openai-primary...\\n';
+            try {
+                const res = await fetch('/api/dashboard/trip-circuit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider: 'openai-primary' })
+                });
+                const data = await res.json();
+                out.innerHTML += `> Failure threshold (4/4) reached!\\n> [ALERT] openai-primary Circuit Breaker TRIPPED to ${data.circuit_state || 'OPEN'}!\\n> Traffic will now automatically divert exclusively to anthropic-secondary.\\n> Click "Send Request Under Active Fault" to verify zero-downtime failover!`;
+            } catch (e) {
+                out.innerHTML += `> Fault injection failed: ${e.message}`;
             }
-
-            out.innerHTML += '> [ALERT] Failure threshold (4) reached! openai-primary Circuit Breaker TRIPPED to OPEN!\\n> Traffic will now automatically divert to anthropic-secondary.';
             refreshProviderStats();
         }
+
 
         async function sendFailoverTestRequest() {
             const out = document.getElementById('circuit-output');

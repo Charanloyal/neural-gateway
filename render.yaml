@@ -14,9 +14,12 @@ services:
       - key: APP_ENV
         value: production
       - key: WORKERS
-        value: "2"
+        value: "1"
       - key: RATE_LIMIT_ENABLED
         value: "true"
       - key: SEMANTIC_CACHE_ENABLED
         value: "true"
+      - key: SEMANTIC_CACHE_SIMILARITY_THRESHOLD
+        value: "0.88"
+
 

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Semantic Vector Cache
     SEMANTIC_CACHE_ENABLED: bool = True
-    SEMANTIC_CACHE_SIMILARITY_THRESHOLD: float = 0.92
+    SEMANTIC_CACHE_SIMILARITY_THRESHOLD: float = 0.88
     SEMANTIC_CACHE_TTL_SECONDS: int = 86400  # 24 hours
     SEMANTIC_CACHE_MAX_ENTRIES: int = 50000
     EMBEDDING_DIMENSION: int = 384

@@ -230,6 +230,28 @@ async def reset_circuits():
     return JSONResponse(content={"message": "Provider pool not initialized"})
 
 
+@app.post("/api/dashboard/trip-circuit", tags=["Dashboard"])
+async def trip_circuit(request: Request):
+    """Simulates upstream provider failure by tripping its circuit breaker to OPEN."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    provider_name = body.get("provider", "openai-primary")
+    if provider_pool and provider_name in provider_pool.providers:
+        p = provider_pool.providers[provider_name]
+        for _ in range(settings.CIRCUIT_BREAKER_FAILURE_THRESHOLD):
+            await p.circuit_breaker.record_failure(Exception(f"Simulated fault injection for {provider_name}"))
+        return JSONResponse(
+            content={
+                "message": f"Provider '{provider_name}' circuit tripped to OPEN",
+                "circuit_state": p.circuit_breaker.state.value,
+                "consecutive_failures": p.circuit_breaker.failure_count,
+            }
+        )
+    return JSONResponse(status_code=404, content={"error": f"Provider '{provider_name}' not found"})
+
+
 @app.post("/api/dashboard/reset-rate-limiter", tags=["Dashboard"])
 async def reset_rate_limiter():
     """Replenishes the rate limiter token buckets."""
@@ -237,6 +259,7 @@ async def reset_rate_limiter():
         await rate_limiter.reset()
         return JSONResponse(content={"message": "Rate limiter buckets replenished"})
     return JSONResponse(content={"message": "Rate limiter not initialized"})
+
 
 
 

@@ -15,6 +15,14 @@ from app.config import settings
 logger = logging.getLogger("neural_gateway.cache")
 
 
+SEMANTIC_STOPWORDS = {
+    "what", "is", "are", "explain", "how", "does", "do", "can", "you", "tell",
+    "me", "about", "in", "an", "the", "a", "works", "working", "work", "please",
+    "describe", "overview", "of", "for", "to", "and", "with", "give", "i",
+    "want", "need", "like", "understanding", "understand", "clarify", "briefly"
+}
+
+
 class EmbeddingEngine:
     """Computes L2-normalized dense embeddings with local transformer model or deterministic fallback."""
 
@@ -47,39 +55,60 @@ class EmbeddingEngine:
             except Exception as e:
                 logger.error(f"Error encoding with SentenceTransformer: {e}. Falling back to deterministic projection.")
 
-        # Deterministic projection fallback based on hash tokenization and random projection
+        # Deterministic projection fallback based on semantic tokenization and stable hashing
         return self._deterministic_projection(clean_text)
 
     def _deterministic_projection(self, text: str) -> np.ndarray:
         """Fast, seed-consistent deterministic n-gram vectorizer normalized to unit sphere."""
-        vec = np.zeros(self.dimension, dtype=np.float32)
-        tokens = text.split()
-        if not tokens:
+        import re, hashlib
+        clean = re.sub(r"[^\w\s]", "", text.lower())
+        raw_tokens = clean.split()
+        if not raw_tokens:
+            vec = np.zeros(self.dimension, dtype=np.float32)
             vec[0] = 1.0
             return vec
 
-        for idx, token in enumerate(tokens):
-            h = hash(token)
-            # Distribute across vector dimensions using token hash
-            pos = abs(h) % self.dimension
-            sign = 1.0 if (h >> 3) % 2 == 0 else -1.0
-            weight = 1.0 / (1.0 + 0.1 * idx)  # Decay weight by position
-            vec[pos] += sign * weight
+        semantic_tokens = []
+        for t in raw_tokens:
+            if t in SEMANTIC_STOPWORDS:
+                continue
+            # Suffix stemming for semantic equivalence
+            if t.endswith("ing") and len(t) > 5:
+                t = t[:-3]
+            elif t.endswith("tion") and len(t) > 6:
+                t = t[:-4]
+            elif t.endswith("ment") and len(t) > 6:
+                t = t[:-4]
+            elif t.endswith("ed") and len(t) > 4:
+                t = t[:-2]
+            elif t.endswith("s") and len(t) > 3 and not t.endswith("ss"):
+                t = t[:-1]
+            semantic_tokens.append(t)
 
-        # Subword character 3-grams for semantic overlap
-        for i in range(len(text) - 2):
-            trigram = text[i : i + 3]
-            h = hash(trigram)
-            pos = abs(h) % self.dimension
-            sign = 1.0 if (h >> 2) % 2 == 0 else -1.0
-            vec[pos] += sign * 0.25
+        if not semantic_tokens:
+            semantic_tokens = raw_tokens
+
+        vec = np.zeros(self.dimension, dtype=np.float32)
+        for idx, token in enumerate(semantic_tokens):
+            h = int(hashlib.md5(token.encode("utf-8")).hexdigest()[:8], 16)
+            pos = h % self.dimension
+            sign = 1.0 if (h >> 4) % 2 == 0 else -1.0
+            vec[pos] += sign * (1.0 + 0.15 * max(0, 5 - idx))
+
+            # Subword character 3-grams for semantic n-gram overlap
+            for i in range(len(token) - 2):
+                sub_h = int(hashlib.md5(token[i : i + 3].encode("utf-8")).hexdigest()[:8], 16)
+                sub_pos = sub_h % self.dimension
+                sub_sign = 1.0 if (sub_h >> 3) % 2 == 0 else -1.0
+                vec[sub_pos] += sub_sign * 0.25
 
         norm = np.linalg.norm(vec)
         if norm > 1e-6:
             vec /= norm
         else:
             vec[0] = 1.0
-        return vec
+        return vec.astype(np.float32)
+
 
 
 def vector_to_bytes(vector: np.ndarray) -> bytes:
