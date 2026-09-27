@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: neural-gateway
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: HOST
+        value: 0.0.0.0
+      - key: APP_ENV
+        value: production
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: SEMANTIC_CACHE_ENABLED
+        value: "true"

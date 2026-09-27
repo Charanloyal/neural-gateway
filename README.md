@@ -7,6 +7,7 @@
 [![Redis](https://img.shields.io/badge/Redis-7.2-DC382D.svg?logo=redis)](https://redis.io/)
 [![Apache Kafka](https://img.shields.io/badge/Kafka-7.5.0-231F20.svg?logo=apachekafka)](https://kafka.apache.org/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-v2.51.0-E6522C.svg?logo=prometheus)](https://prometheus.io/)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Charanloyal/neural-gateway)
 
 > ### 🌐 Active Live Demo Endpoints
 > - **Interactive Swagger Docs**: [https://every-spies-flow.loca.lt/docs](https://every-spies-flow.loca.lt/docs) *(Local: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs))*
