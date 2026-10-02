@@ -13,7 +13,7 @@
 [![Apache Kafka](https://img.shields.io/badge/Kafka-7.5.0-231F20.svg?logo=apachekafka)](https://kafka.apache.org/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-v2.51.0-E6522C.svg?logo=prometheus)](https://prometheus.io/)
 
-**Enterprise-Grade, High-Throughput, Multi-Tenant Distributed LLM Inference Gateway**
+**High-Throughput Multi-Tenant Distributed LLM Inference Gateway**
 
 </div>
 
@@ -28,21 +28,43 @@
 
 ---
 
-## 🎯 Executive Summary for Technical Recruiters & Engineering Hiring Managers
+## Overview
 
-**NeuralGateway** is engineered from the ground up to solve production bottlenecks in high-throughput LLM serving infrastructure: unpredictable provider latencies, cascading outages, redundant API spend, and multi-tenant rate quota enforcement.
+**NeuralGateway** is a multi-tenant distributed LLM inference gateway providing token-bucket rate limiting, semantic vector caching, EWMA latency-weighted provider routing, 3-state circuit breaking, and async Kafka audit logging.
 
-### Key Architectural Decisions & Engineering Highlights
+### Architecture Features
 
-| Architectural Component | Engineering Decision | Production Impact |
+| Component | Strategy | Function |
 | :--- | :--- | :--- |
-| **Distributed Rate Limiting** | Atomic single-roundtrip **Redis Lua script** enforcing token-bucket refills | Zero race conditions across distributed gateway replicas; dynamic HTTP 429 backoff headers (`Retry-After`, `X-RateLimit-*`). |
-| **Semantic Vector Caching** | Unit-normalized **L2 dense vector projection** with cosine similarity ($\ge 0.92$) | Replays cached completions over SSE in **<2ms at $0.00 upstream LLM cost**, saving up to 45% in API billing. |
-| **Dynamic Routing** | Exponentially Weighted Moving Average (**EWMA**) latency weighting: $W_i = 1 / (\text{EWMA}_i)^{1.5}$ | Automatically routes disproportionately to fastest providers while penalizing lagging upstreams. |
-| **Fault Isolation** | **3-State Circuit Breakers** (`CLOSED` &rarr; `OPEN` &rarr; `HALF_OPEN`) with recovery probe timers | Prevents cascading failures when an upstream degrades, triggering instant zero-downtime failover to backup providers. |
-| **Compute Conservation** | Real-time client disconnect detection via `request.is_disconnected()` | Immediately halts upstream token generation if client cancels or closes SSE stream, conserving compute and token quota. |
-| **Zero-Overhead Auditing** | Non-blocking **asynchronous internal queue** producing to Kafka topic `llm-gateway-audit` | Gateway latency is 100% decoupled from Kafka broker I/O; native Prometheus exporter on `/metrics`. |
-| **High Availability Fallbacks** | Automated fallback to **thread-safe in-memory stores** if Redis or Kafka are unreachable | Gateway continues operating with 100% uptime in standalone environments (e.g., cloud free tiers or partitions). |
+| **Rate Limiting** | Token-bucket via Redis Lua | Single-roundtrip atomic quota enforcement with dynamic HTTP 429 backoff headers. |
+| **Semantic Caching** | L2 dense vector cosine similarity | Replays cached completions over SSE for semantically equivalent prompts. |
+| **Dynamic Routing** | EWMA inverse-latency weighting | Dynamically routes requests based on smoothed historical provider response times. |
+| **Circuit Breaking** | 3-State (`CLOSED` / `OPEN` / `HALF_OPEN`) | Prevents cascading failures by isolating degraded upstream providers. |
+| **Disconnect Cancellation** | Real-time `request.is_disconnected()` | Halts upstream token generation if client closes connection. |
+| **Audit Logging** | Non-blocking Kafka producer | Decouples gateway request processing from audit telemetry storage. |
+| **Fallback Modes** | In-memory token bucket & cache | Operates resiliently when Redis or Kafka are unavailable. |
+
+---
+
+## Benchmarks
+
+*Run `locust -f locustfile.py --host http://localhost:8000` to generate load metrics.*
+
+| Scenario / Endpoint | Concurrent Users | RPS | p50 Latency (ms) | p95 Latency (ms) | p99 Latency (ms) | Failures |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Non-Streaming `/v1/chat/completions` | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] |
+| Streaming SSE `/v1/chat/completions` | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] |
+| Semantic Cache HIT | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] |
+| Rate-Limited 429 Bursts | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] | [TBD] |
+
+---
+
+## Limitations
+
+- **Single-Region Redis Dependency**: Semantic cache vector indices and Lua rate limiters rely on a single Redis instance or cluster region.
+- **Local Model Memory**: Loading `sentence-transformers/all-MiniLM-L6-v2` locally requires ~120MB RAM per worker process.
+- **Standalone Mode Scoping**: In-memory rate limiting and cache fallbacks are per-process and not shared across horizontal gateway replicas without Redis.
+- **Upstream Provider Quotas**: Gateway rate limiting does not automatically synch with external provider organization quotas.
 
 ---
 

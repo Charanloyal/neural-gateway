@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +11,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore"
     )
+
+    DEMO_MODE: bool = True
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
 
     # Server Settings
     APP_NAME: str = "NeuralGateway"

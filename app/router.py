@@ -4,6 +4,7 @@ import uuid
 import random
 import asyncio
 import logging
+import httpx
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, AsyncGenerator, Optional, Tuple
 from fastapi import Request
@@ -23,12 +24,10 @@ logger = logging.getLogger("neural_gateway.router")
 
 
 class ProviderException(Exception):
-    """Base exception for upstream provider failure."""
     pass
 
 
 class AllProvidersUnavailableException(Exception):
-    """Raised when all configured providers are tripped by circuit breakers."""
     pass
 
 
@@ -46,34 +45,49 @@ class BaseLLMProvider(ABC):
         self._lock = asyncio.Lock()
 
     def update_ewma_latency(self, sample_latency_ms: float) -> None:
-        """Applies Exponentially Weighted Moving Average (EWMA) to smooth latency spikes."""
         self.ewma_latency_ms = (self.alpha * sample_latency_ms) + ((1.0 - self.alpha) * self.ewma_latency_ms)
-        logger.debug(f"[{self.name}] Updated EWMA latency: {self.ewma_latency_ms:.2f}ms")
 
     @abstractmethod
     async def stream_completion(
         self, prompt: str, request: Request
     ) -> AsyncGenerator[str, None]:
-        """Stream token-by-token text delta generator."""
         pass
 
 
 class MockOpenAIProvider(BaseLLMProvider):
-    """Primary provider mock simulating OpenAI gpt-4o inference streaming."""
-
     def __init__(self, name: str = "openai-primary", initial_ewma_ms: float = 45.0):
         super().__init__(name=name, initial_ewma_ms=initial_ewma_ms)
 
     async def stream_completion(
         self, prompt: str, request: Request
     ) -> AsyncGenerator[str, None]:
-        # Check simulation header for fault injection
         fail_target = request.headers.get("x-mock-fail-provider", "").lower()
         if fail_target == self.name:
             await asyncio.sleep(0.05)
             raise ProviderException(f"Simulated upstream connection failure in {self.name}")
 
-        # Simulate TTFT (time to first token) with realistic network latency
+        if not settings.DEMO_MODE and settings.OPENAI_API_KEY:
+            try:
+                headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}
+                payload = {"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "stream": True}
+                async with httpx.AsyncClient(timeout=settings.PROVIDER_TIMEOUT_SECONDS) as client:
+                    async with client.stream("POST", "https://api.openai.com/v1/chat/completions", headers=headers, json=payload) as resp:
+                        if resp.status_code == 200:
+                            async for line in resp.aiter_lines():
+                                if await request.is_disconnected():
+                                    return
+                                if line.startswith("data: ") and not line.startswith("data: [DONE]"):
+                                    try:
+                                        data = json.loads(line[6:])
+                                        text = data["choices"][0]["delta"].get("content", "")
+                                        if text:
+                                            yield text
+                                    except Exception:
+                                        pass
+                            return
+            except Exception as e:
+                logger.warning(f"Real OpenAI stream error: {e}")
+
         pre_delay = random.uniform(0.035, 0.075)
         await asyncio.sleep(pre_delay)
 
@@ -98,19 +112,13 @@ class MockOpenAIProvider(BaseLLMProvider):
         ]
 
         for chunk in generated_chunks:
-            # Client disconnect check: abort upstream immediately
             if await request.is_disconnected():
-                logger.info(f"[{self.name}] Client disconnected mid-stream. Halting provider stream.")
                 return
-
             yield chunk
-            # Realistic token generation interval (30-50 tokens/sec)
             await asyncio.sleep(random.uniform(0.015, 0.030))
 
 
 class MockAnthropicProvider(BaseLLMProvider):
-    """Secondary provider mock simulating Anthropic claude-3-5-sonnet inference streaming."""
-
     def __init__(self, name: str = "anthropic-secondary", initial_ewma_ms: float = 75.0):
         super().__init__(name=name, initial_ewma_ms=initial_ewma_ms)
 
@@ -121,6 +129,29 @@ class MockAnthropicProvider(BaseLLMProvider):
         if fail_target == self.name:
             await asyncio.sleep(0.05)
             raise ProviderException(f"Simulated upstream connection failure in {self.name}")
+
+        if not settings.DEMO_MODE and settings.ANTHROPIC_API_KEY:
+            try:
+                headers = {"x-api-key": settings.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+                payload = {"model": "claude-3-5-sonnet-20240620", "max_tokens": 1024, "messages": [{"role": "user", "content": prompt}], "stream": True}
+                async with httpx.AsyncClient(timeout=settings.PROVIDER_TIMEOUT_SECONDS) as client:
+                    async with client.stream("POST", "https://api.anthropic.com/v1/messages", headers=headers, json=payload) as resp:
+                        if resp.status_code == 200:
+                            async for line in resp.aiter_lines():
+                                if await request.is_disconnected():
+                                    return
+                                if line.startswith("data: "):
+                                    try:
+                                        data = json.loads(line[6:])
+                                        if data.get("type") == "content_block_delta":
+                                            text = data.get("delta", {}).get("text", "")
+                                            if text:
+                                                yield text
+                                    except Exception:
+                                        pass
+                            return
+            except Exception as e:
+                logger.warning(f"Real Anthropic stream error: {e}")
 
         pre_delay = random.uniform(0.060, 0.110)
         await asyncio.sleep(pre_delay)
@@ -146,9 +177,7 @@ class MockAnthropicProvider(BaseLLMProvider):
 
         for chunk in generated_chunks:
             if await request.is_disconnected():
-                logger.info(f"[{self.name}] Client disconnected mid-stream. Halting provider stream.")
                 return
-
             yield chunk
             await asyncio.sleep(random.uniform(0.020, 0.035))
 

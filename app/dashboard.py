@@ -722,6 +722,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="pulse-dot"></span>
                 <span id="cluster-mode-text">STANDALONE (RESILIENT)</span>
             </span>
+            <span class="badge-link" id="demo-mode-badge" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); color: var(--amber);">
+                <span id="demo-mode-text">SIMULATED</span>
+            </span>
             <a href="/docs" target="_blank" class="badge-link" title="OpenAPI Swagger UI Documentation">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
                 Swagger API Docs
@@ -747,7 +750,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <section class="hero">
             <div class="hero-top">
                 <div>
-                    <h2>Enterprise Distributed LLM Inference Gateway</h2>
+                    <h2>Distributed LLM Inference Gateway</h2>
                     <p>High-throughput multi-tenant inference broker engineered in Python with atomic Redis Lua token buckets, unit-normalized cosine semantic caching, EWMA inverse-latency routing with 3-state circuit breaking, and zero-overhead non-blocking Kafka audit pipelines.</p>
                 </div>
             </div>
@@ -1663,6 +1666,37 @@ curl -s http://127.0.0.1:8000/healthz | jq .
                     const modeText = document.getElementById('cluster-mode-text');
                     if (modeText) {
                         modeText.textContent = data.mode ? data.mode.toUpperCase() : 'HEALTHY';
+                    }
+                    const badgeEl = document.getElementById('demo-mode-badge');
+                    const demoText = document.getElementById('demo-mode-text');
+                    if (demoText && badgeEl) {
+                        const isLive = data.mode === 'distributed' && data.active_embedder === 'sentence-transformers';
+                        demoText.textContent = isLive ? 'LIVE' : 'SIMULATED';
+                        badgeEl.style.borderColor = isLive ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)';
+                        badgeEl.style.background = isLive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)';
+                        badgeEl.style.color = isLive ? 'var(--emerald)' : 'var(--amber)';
+                    }
+                }
+            } catch (e) {}
+            try {
+                const mRes = await fetch('/metrics');
+                if (mRes.ok) {
+                    const mText = await mRes.text();
+                    let ttftSum = 0, ttftCnt = 0;
+                    mText.split('\n').forEach(line => {
+                        if (line.startsWith('llm_gateway_ttft_seconds_sum')) {
+                            const val = parseFloat(line.split(' ').pop());
+                            if (!isNaN(val)) ttftSum += val;
+                        }
+                        if (line.startsWith('llm_gateway_ttft_seconds_count')) {
+                            const val = parseFloat(line.split(' ').pop());
+                            if (!isNaN(val)) ttftCnt += val;
+                        }
+                    });
+                    if (ttftCnt > 0) {
+                        const avgMs = Math.round((ttftSum / ttftCnt) * 1000);
+                        const el = document.getElementById('val-avg-ttft');
+                        if (el) el.textContent = `${avgMs}ms`;
                     }
                 }
             } catch (e) {}

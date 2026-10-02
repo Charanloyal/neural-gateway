@@ -23,27 +23,32 @@ SEMANTIC_STOPWORDS = {
 }
 
 
-class EmbeddingEngine:
-    """Computes L2-normalized dense embeddings with local transformer model or deterministic fallback."""
+_embedder_instance: Optional["EmbeddingEngine"] = None
 
+
+def get_embedding_engine(model_name: str = settings.EMBEDDING_MODEL_NAME, dimension: int = settings.EMBEDDING_DIMENSION) -> "EmbeddingEngine":
+    global _embedder_instance
+    if _embedder_instance is None:
+        _embedder_instance = EmbeddingEngine(model_name=model_name, dimension=dimension)
+    return _embedder_instance
+
+
+class EmbeddingEngine:
     def __init__(self, model_name: str = settings.EMBEDDING_MODEL_NAME, dimension: int = settings.EMBEDDING_DIMENSION):
         self.dimension = dimension
         self.model_name = model_name
         self._model = None
+        self.active_embedder: str = "deterministic-projection"
         self._initialize_model()
 
     def _initialize_model(self) -> None:
         try:
             from sentence_transformers import SentenceTransformer
-            # Suppress noisy logs during local initialization
-            logger.info(f"Loading SentenceTransformer: {self.model_name}...")
             self._model = SentenceTransformer(self.model_name)
-            logger.info("SentenceTransformer loaded successfully.")
-        except Exception as e:
-            logger.warning(
-                f"SentenceTransformer not available or failed to load ({e}). Using deterministic dense vector projection fallback."
-            )
+            self.active_embedder = "sentence-transformers"
+        except Exception:
             self._model = None
+            self.active_embedder = "deterministic-projection"
 
     def encode(self, text: str) -> np.ndarray:
         """Generates a unit-normalized vector (L2 norm = 1.0)."""

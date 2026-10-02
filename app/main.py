@@ -47,15 +47,15 @@ redis_client: Optional[aioredis.Redis] = None
 rate_limiter: Optional[RedisRateLimiter] = None
 semantic_cache: Optional[SemanticCache] = None
 provider_pool: Optional[ProviderPool] = None
+is_ready: bool = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global redis_client, rate_limiter, semantic_cache, provider_pool
+    global redis_client, rate_limiter, semantic_cache, provider_pool, is_ready
 
     logger.info(f"Initializing {settings.APP_NAME} platform services...")
 
-    # 1. Connect to Redis with retry mechanism
     redis_client = None
     for attempt in range(1, settings.REDIS_RETRY_ATTEMPTS + 1):
         try:
@@ -68,55 +68,42 @@ async def lifespan(app: FastAPI):
             )
             await client.ping()
             redis_client = client
-            logger.info("Connected to Redis successfully.")
             break
-        except Exception as e:
-            logger.warning(f"Redis initialization attempt {attempt} failed: {e}")
+        except Exception:
             redis_client = None
-            if attempt == settings.REDIS_RETRY_ATTEMPTS:
-                logger.info("Operating in standalone mode with in-memory Rate Limiting and Semantic Cache.")
             await asyncio.sleep(settings.REDIS_RETRY_DELAY)
 
-    # 2. Instantiate Rate Limiter & Semantic Vector Cache
-    embedding_engine = EmbeddingEngine(
+    from app.cache import get_embedding_engine
+    embedding_engine = get_embedding_engine(
         model_name=settings.EMBEDDING_MODEL_NAME,
         dimension=settings.EMBEDDING_DIMENSION,
     )
     if redis_client:
         rate_limiter = RedisRateLimiter(redis_client)
         semantic_cache = SemanticCache(redis_client, embedding_engine)
-        logger.info("Using distributed Redis Rate Limiter and Semantic Vector Cache.")
     else:
         rate_limiter = InMemoryRateLimiter()
         semantic_cache = InMemorySemanticCache(embedding_engine)
-        logger.info("Using in-memory Token Bucket Rate Limiter and Semantic Cache (standalone mode).")
 
-    # 3. Instantiate Provider Pool
     provider_pool = ProviderPool()
-
-    # 4. Start Kafka Audit Producer
     await kafka_audit_producer.start()
 
-    logger.info(f"{settings.APP_NAME} is fully online and ready for traffic.")
+    is_ready = True
     yield
 
-    # Graceful Shutdown
-    logger.info("Initiating graceful shutdown sequence...")
+    is_ready = False
     await kafka_audit_producer.stop()
     if redis_client:
         await redis_client.aclose()
-        logger.info("Closed Redis connection pool.")
-    logger.info("Shutdown complete.")
 
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="High-Throughput Multi-Tenant Distributed LLM Inference Gateway with Token-Bucket Rate Limiting, Semantic Cosine Caching, EWMA Latency Routing, and 3-State Circuit Breakers.",
+    description="Multi-Tenant Distributed LLM Inference Gateway.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# Enable CORS for browser-based access and external frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -126,29 +113,30 @@ app.add_middleware(
 )
 
 
+@app.get("/ping", tags=["System"])
+async def ping():
+    return JSONResponse(status_code=200, content={"status": "pong", "ready": is_ready})
+
+
 @app.get("/", response_class=HTMLResponse, tags=["Dashboard"], include_in_schema=False)
 async def dashboard_root():
-    """Serves the interactive control center and live inference playground."""
     return HTMLResponse(content=DASHBOARD_HTML)
 
 
-
-# Request and Response Models
 class ChatMessage(BaseModel):
-    role: str = Field(..., description="Role of the author (system, user, assistant)")
-    content: str = Field(..., description="Contents of the message")
+    role: str = Field(...)
+    content: str = Field(...)
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str = Field(default="gpt-4o", description="Target model name")
-    messages: List[ChatMessage] = Field(..., description="Conversation history")
-    stream: bool = Field(default=True, description="Enable Server-Sent Events (SSE) streaming")
+    model: str = Field(default="gpt-4o")
+    messages: List[ChatMessage] = Field(...)
+    stream: bool = Field(default=True)
     temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: Optional[int] = Field(default=1024, ge=1)
 
 
 def extract_prompt_text(messages: List[ChatMessage]) -> str:
-    """Concatenates conversation messages into a canonical string for semantic comparison."""
     user_prompts = [m.content for m in messages if m.role.lower() == "user"]
     if user_prompts:
         return user_prompts[-1]
@@ -157,7 +145,6 @@ def extract_prompt_text(messages: List[ChatMessage]) -> str:
 
 @app.get("/healthz", tags=["System"])
 async def healthz():
-    """Health check for container orchestrators (Docker / Kubernetes / Render)."""
     redis_healthy = False
     if redis_client:
         try:
@@ -168,12 +155,15 @@ async def healthz():
 
     kafka_healthy = kafka_audit_producer.producer is not None
     is_distributed = redis_healthy and kafka_healthy
+    active_embedder = semantic_cache.embedder.active_embedder if (semantic_cache and hasattr(semantic_cache, "embedder")) else "deterministic-projection"
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
             "status": "healthy",
+            "ready": is_ready,
             "mode": "distributed" if is_distributed else "standalone_resilient",
+            "active_embedder": active_embedder,
             "cluster": {
                 "redis_connected": redis_healthy,
                 "kafka_connected": kafka_healthy,
