@@ -1,23 +1,17 @@
 import time
 import json
-import uuid
 import random
 import asyncio
 import logging
 import httpx
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, AsyncGenerator, Optional, Tuple
+from typing import List, Dict, AsyncGenerator, Optional
 from fastapi import Request
 
 from app.config import settings
-from app.circuit_breaker import CircuitBreaker, CircuitBreakerOpenException
+from app.circuit_breaker import CircuitBreaker
 from app.telemetry import (
-    record_request_metric,
-    record_ttft_metric,
-    record_tps_metric,
-    record_cost_metric,
     set_circuit_breaker_metric,
-    ACTIVE_STREAMS,
 )
 
 logger = logging.getLogger("neural_gateway.router")

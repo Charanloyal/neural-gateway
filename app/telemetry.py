@@ -4,7 +4,6 @@ from prometheus_client import (
     Gauge,
     generate_latest,
     CONTENT_TYPE_LATEST,
-    CollectorRegistry,
     REGISTRY,
 )
 from typing import Tuple

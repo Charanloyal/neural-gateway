@@ -1,8 +1,5 @@
-import json
-import math
 import time
 import uuid
-import struct
 import logging
 import asyncio
 from typing import List, Optional, Tuple, Dict, Any
@@ -65,7 +62,8 @@ class EmbeddingEngine:
 
     def _deterministic_projection(self, text: str) -> np.ndarray:
         """Fast, seed-consistent deterministic n-gram vectorizer normalized to unit sphere."""
-        import re, hashlib
+        import re
+        import hashlib
         clean = re.sub(r"[^\w\s]", "", text.lower())
         raw_tokens = clean.split()
         if not raw_tokens:
@@ -246,14 +244,14 @@ class SemanticCache:
         """Clears cached vectors from Redis."""
         try:
             if tenant_id:
-                index_key = f"neural:cache:idx:{tenant_id}"
+                # Must mirror the key layout used by get()/set().
+                index_key = f"semantic_cache:{tenant_id}:index"
                 entry_ids = await self.redis.smembers(index_key)
-                if entry_ids:
-                    keys = [f"neural:cache:entry:{tenant_id}:{eid.decode() if isinstance(eid, bytes) else eid}" for eid in entry_ids]
-                    keys.append(index_key)
-                    await self.redis.delete(*keys)
+                keys = [f"semantic_cache:{tenant_id}:entry:{eid.decode() if isinstance(eid, bytes) else eid}" for eid in entry_ids]
+                keys.append(index_key)
+                await self.redis.delete(*keys)
             else:
-                keys = [k async for k in self.redis.scan_iter("neural:cache:*")]
+                keys = [k async for k in self.redis.scan_iter("semantic_cache:*")]
                 if keys:
                     await self.redis.delete(*keys)
             logger.info("Semantic cache cleared.")

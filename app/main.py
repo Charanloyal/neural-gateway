@@ -4,27 +4,23 @@ import uuid
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import List, Optional, Dict, Any, AsyncGenerator
+from typing import List, Optional, AsyncGenerator
 
 from fastapi import FastAPI, Request, Response, Header, HTTPException, status
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import redis.asyncio as aioredis
-from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.dashboard import DASHBOARD_HTML
 from app.config import settings
-from app.circuit_breaker import CircuitBreakerOpenException
 from app.router import (
     ProviderPool,
-    BaseLLMProvider,
     format_sse_chunk,
     AllProvidersUnavailableException,
-    ProviderException,
 )
 from app.rate_limiter import RedisRateLimiter, InMemoryRateLimiter
-from app.cache import SemanticCache, InMemorySemanticCache, EmbeddingEngine
+from app.cache import SemanticCache, InMemorySemanticCache
 from app.kafka_producer import kafka_audit_producer, AuditEvent
 from app.telemetry import (
     get_latest_metrics,

@@ -1,6 +1,4 @@
 import random
-import string
-import json
 from locust import HttpUser, task, between
 
 
