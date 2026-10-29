@@ -2,7 +2,7 @@ import time
 import logging
 import asyncio
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError, ConnectionError, TimeoutError
 
@@ -150,10 +150,11 @@ class RedisRateLimiter:
     async def reset(self, tenant_id: Optional[str] = None) -> None:
         """Resets rate limiting bucket in Redis."""
         try:
+            # Must mirror the key used by check_rate_limit().
             if tenant_id:
-                await self.redis.delete(f"rate:bucket:{tenant_id}")
+                await self.redis.delete(f"ratelimit:{tenant_id}")
             else:
-                keys = [k async for k in self.redis.scan_iter("rate:bucket:*")]
+                keys = [k async for k in self.redis.scan_iter("ratelimit:*")]
                 if keys:
                     await self.redis.delete(*keys)
             logger.info("Redis rate limit buckets reset.")
